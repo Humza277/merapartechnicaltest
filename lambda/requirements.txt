@@ -1,2 +1,5 @@
+# AWS SDK for Python - Used to interact with AWS services (DynamoDB)
 boto3==1.28.57
+
+# Core dependency of boto3 - AWS SDK low-level functionality
 botocore==1.31.57 

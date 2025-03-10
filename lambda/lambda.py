@@ -1,9 +1,29 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Dynamic String Web Service - Lambda Function
+
+This Lambda function serves as both the frontend and backend for the Dynamic String Web Service.
+It handles two main operations:
+1. Serving an HTML page with the current string value (GET /)
+2. Updating the string value in DynamoDB (POST /update)
+
+The key feature is that string updates don't require redeployment because:
+- The string is stored in DynamoDB, not in the application code
+- HTML is generated dynamically at runtime, incorporating the latest data
+- Updates only change the database value, not the code or infrastructure
+
+Environment Variables:
+- TABLE_NAME: Name of the DynamoDB table storing the string (default: StringTable)
+"""
+
 import json
 import os
 import boto3
 from botocore.exceptions import ClientError
 
-# Initialize DynamoDB client
+# Initialize AWS resources and configuration
+# Use environment variable for table name to make it configurable without code changes
 dynamodb = boto3.resource('dynamodb')
 table_name = os.environ.get('TABLE_NAME', 'StringTable')
 table = dynamodb.Table(table_name)
@@ -11,22 +31,31 @@ string_key = 'string'  # Partition key value for the string item
 
 def handler(event, context):
     """
-    Lambda handler function to serve HTML with dynamic string or update the string
+    Lambda handler function - entry point for all requests
+    
+    This function routes requests based on HTTP method and path:
+    - GET /: Display HTML page with the current string
+    - POST /update: Update the string value in DynamoDB
+    - All other paths/methods: Return 404 Not Found
+    
+    Parameters:
+        event (dict): AWS Lambda event object containing request data
+        context (object): AWS Lambda context object
+        
+    Returns:
+        dict: Response object with statusCode, headers, and body
     """
-    # Get HTTP method and path from the event
+    # Extract HTTP method and path from the API Gateway event structure
     http_method = event.get('requestContext', {}).get('http', {}).get('method', '')
     path = event.get('requestContext', {}).get('http', {}).get('path', '')
     
-    # Handle GET request to serve HTML
+    # Route the request to the appropriate handler based on method and path
     if http_method == 'GET' and path == '/':
         return serve_html()
-    
-    # Handle POST request to update string
     elif http_method == 'POST' and path == '/update':
         return update_string(event)
-    
-    # Handle any other request
     else:
+        # Return 404 for any unhandled routes
         return {
             'statusCode': 404,
             'headers': {
@@ -37,14 +66,26 @@ def handler(event, context):
 
 def serve_html():
     """
-    Fetch the string from DynamoDB and serve HTML page
+    Generate and serve HTML page with the current dynamic string
+    
+    This function:
+    1. Retrieves the current string value from DynamoDB
+    2. Dynamically generates HTML that includes this string
+    3. Returns the HTML response to be displayed in the user's browser
+    
+    The HTML includes:
+    - The dynamic string displayed in an H1 element
+    - API usage information for updating the string via curl
+    
+    Returns:
+        dict: Response object with HTML content
     """
     try:
         # Get the current string from DynamoDB
         response = table.get_item(Key={'key': string_key})
         current_string = response.get('Item', {}).get('value', 'No string found')
         
-        # Create a simple HTML page with the string (no update form)
+        # Generate a responsive HTML page with the dynamic string and API usage info
         html = f"""
         <!DOCTYPE html>
         <html lang="en">
@@ -106,6 +147,7 @@ def serve_html():
         </html>
         """
         
+        # Return HTML response with 200 OK status
         return {
             'statusCode': 200,
             'headers': {
@@ -115,7 +157,7 @@ def serve_html():
         }
         
     except ClientError as e:
-        # Handle DynamoDB errors
+        # Handle any DynamoDB-related errors
         return {
             'statusCode': 500,
             'headers': {
@@ -128,13 +170,29 @@ def serve_html():
 
 def update_string(event):
     """
-    Update the string in DynamoDB
+    Update the string value in DynamoDB
+    
+    This function:
+    1. Parses the JSON request body to get the new string value
+    2. Validates that a value was provided
+    3. Updates the string in DynamoDB
+    4. Returns a success or error response
+    
+    The update is performed using DynamoDB's update_item operation,
+    which ensures atomic updates even with concurrent requests.
+    
+    Parameters:
+        event (dict): AWS Lambda event object containing request data
+        
+    Returns:
+        dict: Response object with success or error message
     """
     try:
-        # Parse the request body to get the new string
+        # Parse and extract the new string value from the request body
         body = json.loads(event.get('body', '{}'))
         new_string = body.get('value', '')
         
+        # Validate that a string value was provided
         if not new_string:
             return {
                 'statusCode': 400,
@@ -146,14 +204,16 @@ def update_string(event):
                 })
             }
         
-        # Update the string in DynamoDB
+        # Update the string value in DynamoDB
+        # Using expression attributes to avoid reserved word conflicts
         table.update_item(
             Key={'key': string_key},
             UpdateExpression='SET #val = :val',
-            ExpressionAttributeNames={'#val': 'value'},
+            ExpressionAttributeNames={'#val': 'value'},  # Use #val because 'value' is a reserved word
             ExpressionAttributeValues={':val': new_string}
         )
         
+        # Return success response
         return {
             'statusCode': 200,
             'headers': {
@@ -166,7 +226,7 @@ def update_string(event):
         }
         
     except (ClientError, json.JSONDecodeError) as e:
-        # Handle errors (DynamoDB or JSON parsing)
+        # Handle errors: either DynamoDB errors or invalid JSON in request body
         return {
             'statusCode': 500,
             'headers': {
